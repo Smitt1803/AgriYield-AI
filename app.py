@@ -1,4 +1,5 @@
 from pathlib import Path
+import math
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -36,7 +37,7 @@ with st.sidebar:
     states = sorted(raw["State"].dropna().astype(str).unique().tolist())
     selected_crops = st.multiselect("Crop", crops, default=crops[:min(5, len(crops))])
     selected_states = st.multiselect("State", states, default=[])
-    st.caption("Leave State empty to include all states.")
+    st.caption("Leave Crop or State empty to include all values in that category.")
 
 filtered = raw.copy()
 if selected_crops and "Crop" in filtered:
@@ -58,11 +59,28 @@ with tab1:
     st.subheader("Yield distribution")
     if "Yield" in filtered.columns:
         yield_values = pd.to_numeric(filtered["Yield"], errors="coerce").dropna()
-        fig, ax = plt.subplots(figsize=(9, 4))
-        sns.histplot(yield_values, bins=40, kde=True, ax=ax)
-        ax.set_xlabel("Yield (source dataset units)")
-        ax.set_ylabel("Record count")
-        st.pyplot(fig)
+        fig, ax = plt.subplots(figsize=(10, 4))
+        fig.patch.set_facecolor("#0E1117")
+        ax.set_facecolor("#0E1117")
+        sns.histplot(
+            yield_values,
+            bins=40,
+            kde=True,
+            color="#38BDF8",
+            edgecolor="#0E1117",
+            linewidth=0.5,
+            ax=ax,
+        )
+        ax.set_title("Distribution of Crop Yield", color="white", pad=14)
+        ax.set_xlabel("Yield (source dataset units)", color="#D1D5DB")
+        ax.set_ylabel("Number of records", color="#D1D5DB")
+        ax.tick_params(axis="both", colors="#D1D5DB")
+        ax.grid(axis="y", linestyle="--", alpha=0.2, color="#9CA3AF")
+        ax.set_axisbelow(True)
+        for spine in ax.spines.values():
+            spine.set_color("#374151")
+        fig.tight_layout()
+        st.pyplot(fig, use_container_width=True)
         plt.close(fig)
 
     left, right = st.columns(2)
@@ -91,10 +109,46 @@ with tab2:
     if metrics_path.exists():
         metrics = pd.read_csv(metrics_path)
         st.dataframe(metrics, use_container_width=True, hide_index=True)
-        metric_col = st.selectbox("Visualize metric", ["RMSE", "MAE", "R2"])
-        chart = metrics.set_index("Model")[[metric_col]].sort_values(metric_col, ascending=(metric_col != "R2"))
-        st.bar_chart(chart)
-        st.caption("These metrics come from the latest local training run. RMSE/MAE are in target units.")
+        metric_col = st.selectbox(
+            "Choose evaluation metric",
+            ["RMSE", "MAE", "R2"],
+            format_func=lambda value: {
+                "RMSE": "Root Mean Squared Error (lower is better)",
+                "MAE": "Mean Absolute Error (lower is better)",
+                "R2": "R² Score (higher is better)",
+            }[value],
+        )
+        chart_data = metrics[["Model", metric_col]].sort_values(
+            metric_col, ascending=(metric_col != "R2")
+        )
+        fig, ax = plt.subplots(figsize=(9, 3.8))
+        fig.patch.set_facecolor("#0E1117")
+        ax.set_facecolor("#0E1117")
+        bars = ax.barh(
+            chart_data["Model"], chart_data[metric_col],
+            color=["#38BDF8", "#34D399", "#A78BFA", "#FBBF24"][:len(chart_data)],
+        )
+        ax.invert_yaxis()
+        ax.set_xlabel(metric_col, color="#D1D5DB")
+        ax.tick_params(axis="both", colors="#D1D5DB")
+        ax.grid(axis="x", linestyle="--", alpha=0.2, color="#9CA3AF")
+        ax.set_axisbelow(True)
+        for spine in ax.spines.values():
+            spine.set_color("#374151")
+        for bar, value in zip(bars, chart_data[metric_col]):
+            ax.annotate(
+                f"{value:.4f}",
+                (bar.get_width(), bar.get_y() + bar.get_height() / 2),
+                xytext=(5, 0), textcoords="offset points",
+                va="center", color="white", fontsize=9,
+            )
+        if metric_col in {"RMSE", "MAE"} and (chart_data[metric_col] > 0).all():
+            ax.set_xscale("log")
+            ax.set_xlabel(f"{metric_col} (log scale; lower is better)", color="#D1D5DB")
+        fig.tight_layout()
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+        st.caption("Metrics are from the latest local holdout evaluation. The default training run uses the latest three observed years as a chronological test period. MAE/RMSE use source target units; R² is unitless.")
     else:
         st.warning("No evaluation results yet. Run `python train_models.py` first.")
 
@@ -120,7 +174,19 @@ with tab3:
             crop = st.selectbox("Crop", crops_all)
             state = st.selectbox("State", states_all)
             season = st.selectbox("Season", seasons_all)
-            year = st.number_input("Crop year", min_value=1990, max_value=2035, value=2020, step=1)
+            observed_years = pd.to_numeric(X["Crop_Year"], errors="coerce").dropna()
+            first_year = int(observed_years.min()) if not observed_years.empty else 1997
+            last_year = int(observed_years.max()) if not observed_years.empty else 2020
+            year = st.number_input(
+                "Crop year", min_value=1990, max_value=2035,
+                value=last_year, step=1,
+                help=f"The training data covers {first_year}–{last_year}. Years outside this range are extrapolations.",
+            )
+            if year < first_year or year > last_year:
+                st.warning(
+                    f"{year} is outside the training data range ({first_year}–{last_year}). "
+                    "Treat this result as an extrapolation with additional uncertainty."
+                )
         with num2:
             rainfall = st.number_input("Annual rainfall (dataset units)", min_value=0.0, value=float(X["Annual_Rainfall"].median()) if X["Annual_Rainfall"].notna().any() else 0.0)
             fertilizer = st.number_input("Fertilizer (dataset units)", min_value=0.0, value=float(X["Fertilizer"].median()) if X["Fertilizer"].notna().any() else 0.0)
@@ -131,24 +197,37 @@ with tab3:
                 "Annual_Rainfall": rainfall, "Fertilizer": fertilizer, "Pesticide": pesticide
             }], columns=FEATURES)
             prediction = float(model.predict(row)[0])
-            st.success(f"Estimated yield: {prediction:,.4f} (source dataset target units)")
-            st.caption("This is a model estimate based on historical patterns, not an agronomic recommendation.")
+            if not math.isfinite(prediction):
+                st.error("The model returned a non-finite prediction. Check the inputs and retrain the model.")
+            else:
+                st.metric("Estimated crop yield", f"{prediction:,.4f}")
+                if prediction < 0:
+                    st.warning("The model returned a negative estimate, which may be physically implausible. Treat it cautiously and review the input values.")
+            st.caption(
+                "Source dataset target units. This is a model estimate based on historical patterns, "
+                "not a guarantee or an agronomic recommendation."
+            )
 
 with tab4:
     st.subheader("Dataset quality")
-    st.write({
-        "Rows": quality["rows"],
-        "Columns": quality["columns"],
-        "Duplicate rows": quality["duplicate_rows"],
-        "Missing cells": quality["missing_cells"],
-    })
+    q1, q2, q3, q4 = st.columns(4)
+    q1.metric("Rows", f"{quality['rows']:,}")
+    q2.metric("Columns", f"{quality['columns']}")
+    q3.metric("Duplicate rows", f"{quality['duplicate_rows']:,}")
+    q4.metric("Missing cells", f"{quality['missing_cells']:,}")
     st.write("Missing values by column")
-    st.dataframe(quality["missing_by_column"].rename("Missing values"), use_container_width=True)
+    missing_table = (
+        quality["missing_by_column"]
+        .rename("Missing values")
+        .rename_axis("Column")
+        .reset_index()
+    )
+    st.dataframe(missing_table, use_container_width=True, hide_index=True)
     st.subheader("Model design")
     st.markdown("""
     - **Task:** supervised regression; the target is continuous `Yield`.
     - **Models:** Linear Regression, Decision Tree, Random Forest, Gradient Boosting.
-    - **Metrics:** MAE, RMSE, and R² on the same reproducible holdout split.
+    - **Metrics:** MAE, RMSE, and R² on the same chronological holdout (latest three observed years).
     - **Preprocessing:** numeric median imputation; categorical most-frequent imputation and one-hot encoding.
     - **Leakage prevention:** `Area` and `Production` are excluded because the dataset defines yield from production divided by area.
     - **Validation caveat:** a random split may not fully represent forecasting future years or unseen regions. Temporal validation is a recommended extension.

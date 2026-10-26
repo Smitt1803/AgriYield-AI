@@ -31,7 +31,9 @@ def prepare_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
 
     # Keep missing predictor values for sklearn's imputation pipeline.
     for col in CATEGORICAL_FEATURES:
-        work[col] = work[col].astype("string").fillna("Unknown").astype(str)
+        categorical = work[col].astype("string").str.strip()
+        categorical = categorical.mask(categorical.eq(""), pd.NA)
+        work[col] = categorical.fillna("Unknown").astype(str)
 
     X = work[FEATURES].copy()
     y = work[TARGET].astype(float).copy()

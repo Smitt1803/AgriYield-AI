@@ -1,10 +1,7 @@
-from pathlib import Path
-import pandas as pd
-
 from src.data_loader import load_dataset
-from src.preprocessing import prepare_dataframe, dataset_quality_summary
-from src.modeling import train_and_compare, save_model
 from src.evaluation import save_evaluation_outputs
+from src.modeling import save_model, train_and_compare
+from src.preprocessing import dataset_quality_summary, prepare_dataframe
 
 
 def main() -> None:
@@ -24,7 +21,8 @@ def main() -> None:
     save_model(best["pipeline"])
     save_evaluation_outputs(metrics, predictions, importance)
 
-    print("\nModel comparison (lower MAE/RMSE is better; higher R² is generally better):")
+    print(f"\nEvaluation protocol: {best['validation']}")
+    print("Model comparison (lower MAE/RMSE is better; higher R² is generally better):")
     print(metrics.to_string(index=False, float_format=lambda value: f"{value:.4f}"))
     print(f"\nSelected by lowest holdout RMSE: {best['name']}")
     print("Saved model: models/best_model.joblib")
@@ -32,8 +30,8 @@ def main() -> None:
     print("Saved test predictions: reports/test_predictions.csv")
     if not importance.empty:
         print("Saved feature importance: reports/feature_importance.csv")
-    print("\nNote: the selected model is refitted on all available data for demo predictions.")
-    print("The printed metrics are from the held-out test split before that refit.")
+    print("\nThe displayed metrics are from the holdout before the selected model was refitted.")
+    print("The saved model is refitted on all labelled rows for demo predictions.")
 
 
 if __name__ == "__main__":
