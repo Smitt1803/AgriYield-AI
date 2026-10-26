@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+
+# Generated dataset and artifacts
+data/raw/*.csv
+models/*.joblib
+reports/test_predictions.csv
+reports/feature_importance.csv
+reports/model_comparison.csv
+
+# Notebooks / editor
+.ipynb_checkpoints/
+.vscode/
+.DS_Store
